@@ -178,9 +178,7 @@ setup_tab, terms_tab, upload_tab, query_tab = st.tabs(
 with setup_tab:
     st.subheader("LLM Setup")
     api_key = st.text_input("Enter your OpenAI API key here", type="password")
-    llm_name = st.selectbox(
-        "Choose an LLM", ["text-davinci-003", "gpt-3.5-turbo", "gpt-4"]
-    )
+    llm_name = st.selectbox("Choose an LLM", ["gpt-3.5-turbo", "gpt-4"])
     model_temperature = st.slider(
         "Model Temperature", min_value=0.0, max_value=1.0, value=0.0, step=0.1
     )
