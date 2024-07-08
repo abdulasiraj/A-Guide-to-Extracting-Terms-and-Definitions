@@ -25,19 +25,6 @@ from PIL import Image
 from llama_index.readers.file import ImageReader
 
 
-@st.cache_resource
-def get_file_extractor():
-    image_parser = ImageReader(keep_image=True, parse_text=True)
-    file_extractor = {
-        ".jpg": image_parser,
-        ".png": image_parser,
-        ".jpeg": image_parser,
-    }
-    return file_extractor
-
-
-file_extractor = get_file_extractor()
-
 # Text QA templates
 DEFAULT_TEXT_QA_PROMPT_TMPL = (
     "Context information is below. \n"
@@ -195,7 +182,6 @@ def insert_terms(terms_to_definition):
 @st.cache_resource
 def initialize_index(llm_name, model_temperature, api_key):
     """Create the VectorStoreIndex object."""
-    # TODO update this thing in doc
     Settings.llm = get_llm(llm_name, model_temperature, api_key)
 
     # create a vector store index for each folder
@@ -204,21 +190,29 @@ def initialize_index(llm_name, model_temperature, api_key):
             StorageContext.from_defaults(persist_dir="./initial_index")
         )
     except Exception as e:
+        print(e)
         docs = [
-            Document(text=key + " : " + value) for key, value in DEFAULT_TERMS.items()
+            Document(text=f"Term: {key}\nDefinition: {value}")
+            for key, value in DEFAULT_TERMS.items()
         ]
         index = VectorStoreIndex.from_documents(docs)
         index.storage_context.persist(persist_dir="./initial_index")
-    # TODO update this in docs
     return index
 
 
-DEFAULT_TERM_STR = (
-    "Make a list of terms and definitions that are defined in the context, "
-    "with one pair on each line. "
-    "If a term is missing it's definition, use your best judgment. "
-    "Write each line as as follows:\nTerm: <term> Definition: <definition>"
-)
+@st.cache_resource
+def get_file_extractor():
+    image_parser = ImageReader(keep_image=True, parse_text=True)
+    file_extractor = {
+        ".jpg": image_parser,
+        ".png": image_parser,
+        ".jpeg": image_parser,
+    }
+    return file_extractor
+
+
+file_extractor = get_file_extractor()
+
 
 st.title("🦙 Llama Index Term Extractor 🦙")
 
@@ -271,12 +265,12 @@ with upload_tab:
                         )
                     )
                 if uploaded_file:
-                    breakpoint()
                     Image.open(uploaded_file).convert("RGB").save("temp.png")
                     img_reader = SimpleDirectoryReader(
                         input_files=["temp.png"], file_extractor=file_extractor
                     )
                     img_docs = img_reader.load_data()
+                    os.remove("temp.png")
                     terms_docs.update(
                         extract_terms(
                             img_docs,
@@ -321,10 +315,7 @@ with query_tab:
     if "llama_index" in st.session_state:
         query_text = st.text_input("Ask about a term or definition:")
         if query_text:
-            query_text = (
-                query_text
-                + "\nIf you can't find the answer, answer the query with the best of your knowledge."
-            )
+            query_text = query_text
             # breakpoint()
             with st.spinner("Generating answer..."):
                 response = (
