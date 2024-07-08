@@ -11,8 +11,32 @@ from llama_index.core import (
 from llama_index.llms.openai import OpenAI
 from llama_index.core import Settings
 
-from llama_index.core.prompts.prompts import QuestionAnswerPrompt, RefinePrompt
 
+from llama_index.core import (
+    PromptTemplate,
+    SelectorPromptTemplate,
+    ChatPromptTemplate,
+    SimpleDirectoryReader,
+)
+from llama_index.core.prompts.utils import is_chat_model
+from llama_index.core.llms import ChatMessage, MessageRole
+
+from PIL import Image
+from llama_index.readers.file import ImageReader
+
+
+@st.cache_resource
+def get_file_extractor():
+    image_parser = ImageReader(keep_image=True, parse_text=True)
+    file_extractor = {
+        ".jpg": image_parser,
+        ".png": image_parser,
+        ".jpeg": image_parser,
+    }
+    return file_extractor
+
+
+file_extractor = get_file_extractor()
 
 # Text QA templates
 DEFAULT_TEXT_QA_PROMPT_TMPL = (
@@ -20,10 +44,10 @@ DEFAULT_TEXT_QA_PROMPT_TMPL = (
     "---------------------\n"
     "{context_str}"
     "\n---------------------\n"
-    "Given the context information, directly answer the following question "
+    "Given the context information answer the following question "
     "(if you don't know the answer, use the best of your knowledge): {query_str}\n"
 )
-TEXT_QA_TEMPLATE = QuestionAnswerPrompt(DEFAULT_TEXT_QA_PROMPT_TMPL)
+TEXT_QA_TEMPLATE = PromptTemplate(DEFAULT_TEXT_QA_PROMPT_TMPL)
 
 # Refine templates
 DEFAULT_REFINE_PROMPT_TMPL = (
@@ -35,11 +59,38 @@ DEFAULT_REFINE_PROMPT_TMPL = (
     "{context_msg}\n"
     "------------\n"
     "Given the new context and using the best of your knowledge, improve the existing answer. "
-    "If you can't improve the existing answer, just repeat it again. "
-    "Do not include un-needed or un-helpful information that is shown in the new context. "
-    "Do not mention that you've read the above context."
+    "If you can't improve the existing answer, just repeat it again."
 )
-DEFAULT_REFINE_PROMPT = RefinePrompt(DEFAULT_REFINE_PROMPT_TMPL)
+DEFAULT_REFINE_PROMPT = PromptTemplate(DEFAULT_REFINE_PROMPT_TMPL)
+
+CHAT_REFINE_PROMPT_TMPL_MSGS = [
+    ChatMessage(content="{query_str}", role=MessageRole.USER),
+    ChatMessage(content="{existing_answer}", role=MessageRole.ASSISTANT),
+    ChatMessage(
+        content="We have the opportunity to refine the above answer "
+        "(only if needed) with some more context below.\n"
+        "------------\n"
+        "{context_msg}\n"
+        "------------\n"
+        "Given the new context and using the best of your knowledge, improve the existing answer. "
+        "If you can't improve the existing answer, just repeat it again.",
+        role=MessageRole.USER,
+    ),
+]
+
+CHAT_REFINE_PROMPT = ChatPromptTemplate(CHAT_REFINE_PROMPT_TMPL_MSGS)
+
+# refine prompt selector
+REFINE_TEMPLATE = SelectorPromptTemplate(
+    default_template=DEFAULT_REFINE_PROMPT,
+    conditionals=[(is_chat_model, CHAT_REFINE_PROMPT)],
+)
+DEFAULT_TERM_STR = (
+    "Make a list of terms and definitions that are defined in the context, "
+    "with one pair on each line. "
+    "If a term is missing it's definition, use your best judgment. "
+    "Write each line as as follows:\nTerm: <term> Definition: <definition>"
+)
 
 
 def get_llm(
@@ -197,21 +248,44 @@ with upload_tab:
         st.markdown(
             "Either upload an image/screenshot of a document, or enter the text manually."
         )
+        uploaded_file = st.file_uploader(
+            "Upload an image/screenshot of a document:",
+            type=["png", "jpg", "jpeg"],
+        )
         document_text = st.text_area("Or enter raw text")
         # TODO remove uploaded_file in docs and update the text
-        if st.button("Extract Terms and Definitions") and document_text:
+        if st.button("Extract Terms and Definitions") and (
+            document_text or uploaded_file
+        ):
             st.session_state["terms"] = {}
             terms_docs = {}
-            with st.spinner("Extracting..."):
-                terms_docs.update(
-                    extract_terms(
-                        [Document(text=document_text)],
-                        term_extract_str,
-                        llm_name,
-                        model_temperature,
-                        api_key,
+            with st.spinner("Extracting (images may be slow)..."):
+                if document_text:
+                    terms_docs.update(
+                        extract_terms(
+                            [Document(text=document_text)],
+                            term_extract_str,
+                            llm_name,
+                            model_temperature,
+                            api_key,
+                        )
                     )
-                )
+                if uploaded_file:
+                    breakpoint()
+                    Image.open(uploaded_file).convert("RGB").save("temp.png")
+                    img_reader = SimpleDirectoryReader(
+                        input_files=["temp.png"], file_extractor=file_extractor
+                    )
+                    img_docs = img_reader.load_data()
+                    terms_docs.update(
+                        extract_terms(
+                            img_docs,
+                            term_extract_str,
+                            llm_name,
+                            model_temperature,
+                            api_key,
+                        )
+                    )
             st.session_state["terms"].update(terms_docs)
 
     if "terms" in st.session_state and st.session_state["terms"]:
